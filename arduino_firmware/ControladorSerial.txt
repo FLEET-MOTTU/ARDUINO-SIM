@@ -1,0 +1,230 @@
+//Libs
+#include <Arduino.h>
+#include <Servo.h>
+#include <NewPing.h>
+
+
+// ----------------------------------------------- Hardware Abstraction Layer
+
+// Pinos
+
+// Scanner (HC-SR04)
+#define PIN_SERVO A5 // posição do servo
+#define PIN_TRIG A1 // trigger do sensor ultrassônico (disparo da onda sonora)
+#define PIN_ECHO A0 // echo do sensor ultrassônico (recebimento da onda sonora)
+#define MAX_DISTANCE 200 // Distancia maxima em cm para o sensor (timeout do sensor)
+
+// Motores
+// Motor Traseiro Direito (speedpin1)
+#define PINO_MTR_TR_DIR_IN1 5 // dir1
+#define PINO_MTR_TR_DIR_IN2 7 // dir2
+#define PINO_MTR_TR_DIR_PWM 3 // velocidade(PWM)
+
+// Motor Frontal Direito (speedpin2)
+#define PINO_MTR_FR_DIR_IN2 8  // dir3
+#define PINO_MTR_FR_DIR_IN1 10 // dir4
+#define PINO_MTR_FR_DIR_PWM 6
+
+// Motor Traseiro Esquerdo (speedpin3)
+#define PINO_MTR_TR_ESQ_IN1 2 // dir5
+#define PINO_MTR_TR_ESQ_IN2 4 // dir6
+#define PINO_MTR_TR_ESQ_PWM 9
+
+// Motor Frontal Esquerdo (speedpin4)
+#define PINO_MTR_FR_ESQ_IN2 12 // dir7
+#define PINO_MTR_FR_ESQ_IN1 13 // dir8
+#define PINO_MTR_FR_ESQ_PWM 11
+
+
+// Global Instances
+Servo scannerServo;
+NewPing sonar(PIN_TRIG, PIN_ECHO, MAX_DISTANCE);
+
+
+// -----------------------  Controle de Motor de Baixo Nível (Ponte H - DRIVER L298N)
+/**
+ * @param pinoIN1 Pino de controle de direção 1 da Ponte H.
+ * @param pinoIN2 Pino de controle de direção 2 da Ponte H.
+ * @param pinoPWM Pino de controle de velocidade (PWM).
+ * @param velocidade Valor de 0 a 255 (duty cycle do PWM).
+ */
+
+
+/**
+ * @brief Aciona motor p/ rotação frontal.
+ */
+void motorFrente(int pinoIN1, int pinoIN2, int pinoPWM, int velocidade) {
+  digitalWrite(pinoIN1, HIGH);
+  digitalWrite(pinoIN2, LOW);
+  analogWrite(pinoPWM, velocidade);
+}
+
+
+/**
+ * @brief Aciona motor p/ rotação reversa.
+ */
+void motorTras(int pinoIN1, int pinoIN2, int pinoPWM, int velocidade) {
+  digitalWrite(pinoIN1, LOW);
+  digitalWrite(pinoIN2, HIGH);
+  analogWrite(pinoPWM, velocidade);
+}
+
+/**
+ * @brief Desenergiza motor (freio).
+ */
+void motorParar(int pinoIN1, int pinoIN2, int pinoPWM) {
+  digitalWrite(pinoIN1, LOW);
+  digitalWrite(pinoIN2, LOW);
+  analogWrite(pinoPWM, 0);
+} 
+
+
+// ------------------------------------------- Controle de Chassi de Alto Nível (4WD)
+/**
+ * @param velocidade Velocidade dos motores (0-255).
+ */
+
+
+/**
+ * @brief Move o chassi para frente.
+ */
+void chassiAvancar(int velocidade) {
+  Serial.println("CHASSI 4WD: Comando AVANCAR");
+  motorFrente(PINO_MTR_TR_ESQ_IN1, PINO_MTR_TR_ESQ_IN2, PINO_MTR_TR_ESQ_PWM, velocidade);
+  motorFrente(PINO_MTR_FR_ESQ_IN1, PINO_MTR_FR_ESQ_IN2, PINO_MTR_FR_ESQ_PWM, velocidade);
+  motorFrente(PINO_MTR_TR_DIR_IN1, PINO_MTR_TR_DIR_IN2, PINO_MTR_TR_DIR_PWM, velocidade);
+  motorFrente(PINO_MTR_FR_DIR_IN1, PINO_MTR_FR_DIR_IN2, PINO_MTR_FR_DIR_PWM, velocidade);
+}
+
+
+/**
+ * @brief Move o chassi para tras.
+ */
+void chassiRecuar(int velocidade) {
+  Serial.println("CHASSI 4WD: Comando RECUAR");
+  motorTras(PINO_MTR_TR_ESQ_IN1, PINO_MTR_TR_ESQ_IN2, PINO_MTR_TR_ESQ_PWM, velocidade);
+  motorTras(PINO_MTR_FR_ESQ_IN1, PINO_MTR_FR_ESQ_IN2, PINO_MTR_FR_ESQ_PWM, velocidade);
+  motorTras(PINO_MTR_TR_DIR_IN1, PINO_MTR_TR_DIR_IN2, PINO_MTR_TR_DIR_PWM, velocidade);
+  motorTras(PINO_MTR_FR_DIR_IN1, PINO_MTR_FR_DIR_IN2, PINO_MTR_FR_DIR_PWM, velocidade);
+}
+
+
+/**
+ * @brief Executa giro (pivot turn) no próprio eixo para a direita.
+ */
+void chassiVirarDireita(int velocidade) {
+  Serial.println("CHASSI 4WD: Comando VIRAR DIREITA (PIVOT)");
+  // Motores da esquerda para frente
+  motorFrente(PINO_MTR_TR_ESQ_IN1, PINO_MTR_TR_ESQ_IN2, PINO_MTR_TR_ESQ_PWM, velocidade);
+  motorFrente(PINO_MTR_FR_ESQ_IN1, PINO_MTR_FR_ESQ_IN2, PINO_MTR_FR_ESQ_PWM, velocidade);
+  // Motores da direita para trás
+  motorTras(PINO_MTR_TR_DIR_IN1, PINO_MTR_TR_DIR_IN2, PINO_MTR_TR_DIR_PWM, velocidade);
+  motorTras(PINO_MTR_FR_DIR_IN1, PINO_MTR_FR_DIR_IN2, PINO_MTR_FR_DIR_PWM, velocidade);
+}
+
+
+/**
+ * @brief Executa giro (pivot turn) no próprio eixo para a esquerda.
+ */
+void chassiVirarEsquerda(int velocidade) {
+  Serial.println("CHASSI 4WD: Comando VIRAR ESQUERDA (PIVOT)");
+  // Motores da esquerda para trás
+  motorTras(PINO_MTR_TR_ESQ_IN1, PINO_MTR_TR_ESQ_IN2, PINO_MTR_TR_ESQ_PWM, velocidade);
+  motorTras(PINO_MTR_FR_ESQ_IN1, PINO_MTR_FR_ESQ_IN2, PINO_MTR_FR_ESQ_PWM, velocidade);
+  // Motores da direita para frente
+  motorFrente(PINO_MTR_TR_DIR_IN1, PINO_MTR_TR_DIR_IN2, PINO_MTR_TR_DIR_PWM, velocidade);
+  motorFrente(PINO_MTR_FR_DIR_IN1, PINO_MTR_FR_DIR_IN2, PINO_MTR_FR_DIR_PWM, velocidade);
+}
+
+
+/**
+ * @brief Para todo o movimento do chassi.
+ */
+void chassiParar() {
+  Serial.println("CHASSI 4WD: Comando PARAR");
+  motorParar(PINO_MTR_TR_ESQ_IN1, PINO_MTR_TR_ESQ_IN2, PINO_MTR_TR_ESQ_PWM);
+  motorParar(PINO_MTR_FR_ESQ_IN1, PINO_MTR_FR_ESQ_IN2, PINO_MTR_FR_ESQ_PWM);
+  motorParar(PINO_MTR_TR_DIR_IN1, PINO_MTR_TR_DIR_IN2, PINO_MTR_TR_DIR_PWM);
+  motorParar(PINO_MTR_FR_DIR_IN1, PINO_MTR_FR_DIR_IN2, PINO_MTR_FR_DIR_PWM);
+}
+
+
+// ------------------------------------------------------------------ Scanner
+/**
+ * @brief Executa uma varredura de 180 graus e envia os dados via Serial.
+ * Output: "angulo;distancia\n" p/ parsing pelo host (Python).
+ */
+void scannerFazerVarredura() {
+  Serial.println("SCANNER: Iniciando varredura 180 graus");
+
+  for (int angulo = 0; angulo <= 180; angulo += 10) {
+    scannerServo.write(angulo);
+    delay(40); // Tempo p/ o servo chegar na posicao
+
+    int distancia = sonar.ping_cm();
+
+    // NewPing detection?
+    // 1: print "angulo;distancia"
+    // 0: return MAX_DISTANCE padrão (200)
+    if (distancia == 0) {
+        distancia = MAX_DISTANCE;
+    }
+    Serial.println(String(angulo) + ";" + String(distancia));
+  }
+
+  // Retorna o servo para o centro
+  scannerServo.write(90);
+  Serial.println("SCANNER: Varredura concluida.");
+}
+
+
+//--------------------------------------------------------- Setup Modo de Prod
+void setup() {
+  
+  // Serial.begin para logs
+  Serial.begin(9600);
+  
+  // pinos motor
+  pinMode(PINO_MTR_TR_DIR_IN1, OUTPUT); 
+  pinMode(PINO_MTR_TR_DIR_IN2, OUTPUT); 
+  pinMode(PINO_MTR_TR_DIR_PWM, OUTPUT);
+  pinMode(PINO_MTR_FR_DIR_IN1, OUTPUT); 
+  pinMode(PINO_MTR_FR_DIR_IN2, OUTPUT); 
+  pinMode(PINO_MTR_FR_DIR_PWM, OUTPUT);
+  pinMode(PINO_MTR_TR_ESQ_IN1, OUTPUT); 
+  pinMode(PINO_MTR_TR_ESQ_IN2, OUTPUT); 
+  pinMode(PINO_MTR_TR_ESQ_PWM, OUTPUT);
+  pinMode(PINO_MTR_FR_ESQ_IN1, OUTPUT); 
+  pinMode(PINO_MTR_FR_ESQ_IN2, OUTPUT); 
+  pinMode(PINO_MTR_FR_ESQ_PWM, OUTPUT);
+
+  // pino servo
+  scannerServo.attach(PIN_SERVO);
+
+  Serial.println("Controlador do robo inicializado");
+}
+
+
+// ------------------------------------------------------------ Loop Modo de Prod
+void loop() {
+  if (Serial.available() > 0) {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+
+    char action = command.charAt(0);
+    int value = command.substring(1).toInt();
+
+    // Decide ação (usando padrão WASD para intuição nos testes)
+    switch (action) {
+      case 'w': chassiAvancar(value); break;
+      case 's': chassiRecuar(value); break;
+      case 'd': chassiVirarDireita(value); break;
+      case 'a': chassiVirarEsquerda(value); break;
+      case 'q': chassiParar(); break;
+      case 'e': scannerFazerVarredura(); break;
+      default:
+        Serial.println("ERR: Comando desconhecido -> " + command);
+        break;
+    }
+  }
+}

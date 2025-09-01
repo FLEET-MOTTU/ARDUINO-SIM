@@ -1,0 +1,8 @@
+{
+    "arduino.useArduinoCli": true,
+    "arduino.path": "C:/Users/ajour/Downloads/arduino-cli_1.3.1_Windows_64bit",
+    "arduino.commandPath": "arduino-cli.exe",
+    "files.associations": {
+        "*.ino": "cpp"
+    }
+}

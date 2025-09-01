@@ -1,0 +1,7 @@
+pyserial
+paho-mqtt
+Pillow
+python-dotenv
+pydantic
+pydantic-settings
+pygame

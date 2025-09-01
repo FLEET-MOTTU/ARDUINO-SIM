@@ -1,0 +1,21 @@
+{
+    "configurations": [
+        {
+            "name": "ArduinoUno",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "C:/Users/ajour/OneDrive/Documents/Arduino/libraries/**",
+                "C:/Users/ajour/AppData/Local/Arduino15/packages/arduino/hardware/avr/1.8.6/cores/arduino",
+                "C:/Users/ajour/AppData/Local/Arduino15/packages/arduino/hardware/avr/1.8.6/variants/standard",
+                "C:/Users/ajour/AppData/Local/Arduino15/packages/arduino/tools/**"
+            ],
+            "defines": [
+                "ARDUINO=10819",
+                "ARDUINO_AVR_UNO"
+            ],
+            "compilerPath": "C:/Users/ajour/AppData/Local/Arduino15/packages/arduino/tools/avr-gcc/7.3.0-atmel3.6.1-arduino7/bin/avr-g++",
+            "intelliSenseMode": "gcc-x64"
+        }
+    ],
+    "version": 4
+}
