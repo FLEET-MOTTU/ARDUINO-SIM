@@ -1,15 +1,12 @@
 import base64
-import os
-
 import paho.mqtt.client as mqtt
-
 from src.config import settings
 
 
 class MqttPublisher:
     """Gerencia a publicação de status e dados para um broker MQTT."""
     def __init__(self, broker, porta):
-        self.cliente = mqtt.Client()
+        self.cliente = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="robo_cerebro_publisher")
         self.conectado = False
         try:
             print(f"Tentando conectar ao Broker MQTT em {broker}...")
@@ -24,11 +21,9 @@ class MqttPublisher:
     def publicar_status(self, mensagem):
         if self.conectado:
             self.cliente.publish(settings.mqtt_topico_status, mensagem)
-        print(f"MQTT -> Status publicado: '{mensagem}'")
-    
 
+    
     def publicar_mapa(self, caminho_do_arquivo):
-        """Lê uma imagem, codifica em Base64 e publica no tópico de mapa."""
         if not self.conectado:
             print("ERRO MQTT: Não conectado ao broker. Impossível publicar mapa.")
             return False
@@ -38,7 +33,7 @@ class MqttPublisher:
             with open(caminho_do_arquivo, "rb") as image_file:
                 encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
             
-            self.cliente.publish(settings.mqtt_topico_mapa, encoded_string, qos=1) # QoS 1 para garantir entrega
+            self.cliente.publish(settings.mqtt_topico_mapa, encoded_string, qos=1)
             print(f"MQTT -> Mapa publicado com sucesso no tópico '{settings.mqtt_topico_mapa}'")
             return True
         except FileNotFoundError:

@@ -5,3 +5,4 @@ output/
 !/broker/.gitkeep
 !/broker/mosquitto-2.0.22/
 !/broker/mosquitto-2.0.22/.gitkeepgit init
+Iniciando

@@ -1,9 +1,9 @@
 import serial
 import time
 
+
 class SerialHandler:
     """Gerencia a comunicação de baixo nível com o Arduino REAL."""
-
     def __init__(self, porta, baud):
         """Tenta estabelecer uma conexão serial. Se falhar, levanta uma exceção."""
         self.conexao = None
@@ -16,12 +16,14 @@ class SerialHandler:
         except serial.SerialException as e:
             print(f"FALHA: Não foi possível conectar ao Arduino. Verifique a porta e a conexão.")
             raise e
+        
 
     def enviar_comando(self, comando):
         """Envia um comando para o Arduino pela porta serial."""
         print(f"CÉREBRO -> Enviando comando para o corpo: '{comando}'")
         comando_final = comando + '\n'
         self.conexao.write(comando_final.encode('utf-8'))
+
 
     def receber_scan_dados(self):
         """
@@ -50,6 +52,7 @@ class SerialHandler:
         
         print(f"Scan recebido e processado. {len(dados_processados)} pontos capturados.")
         return dados_processados
+    
 
     def fechar_conexao(self):
         """Fecha a porta serial se ela estiver aberta."""
