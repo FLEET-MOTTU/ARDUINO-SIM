@@ -1,70 +1,83 @@
 import os
 import time
+import serial
 
 from src.config import settings
 from src.communication import MqttPublisher
 from src.hardware import SerialHandler
 from src.mapping import Mapper
 
-
 def main():
     print("--- INICIANDO CÉREBRO AUTÔNOMO DO ROBÔ ---")
-
-    comunicador_mqtt = MqttPublisher(settings.mqtt_broker_host, settings.mqtt_broker_port)
-    ponte_serial = SerialHandler(settings.serial_port, settings.baud_rate)
-    mapeador = Mapper()
     
-    if ponte_serial.em_simulacao:
-        print("ERRO FATAL: Não foi possível conectar ao Arduino (real ou simulado).")
-        print("Verifique se o arduino_emulator.py está rodando ou se o hardware está conectado.")
+    ponte_serial = None
+    try:
+        # Tenta se conectar a QUALQUER porta definida no .env.
+        # Não há mais modo de simulação, apenas "conectar ao hardware".
+        # O "hardware" pode ser real ou o nosso firmware virtual.
+        ponte_serial = SerialHandler(settings.serial_port, settings.baud_rate)
+            
+    except serial.SerialException as e:
+        print("\nERRO FATAL: Não foi possível estabelecer comunicação serial.")
+        print(f"Verifique se o dispositivo (real ou simulado) está disponível na porta '{settings.serial_port}'.")
+        print(f"Se estiver em simulação, garanta que 'firmware.py' está rodando.")
+        print(f"Se estiver em produção, garanta que o Arduino está conectado.")
+        print(f"Detalhe do Erro: {e}")
         return
 
+    comunicador_mqtt = MqttPublisher(settings.mqtt_broker_host, settings.mqtt_broker_port)
+    mapeador = Mapper()
+    
     comunicador_mqtt.publicar_status("ONLINE - Iniciando exploração autônoma")
     time.sleep(1)
 
     try:
+        # A lógica principal do robô permanece idêntica
         while True:
-            # ESTADO 1: PERCEPÇÃO - Sempre começa escaneando
             comunicador_mqtt.publicar_status("AUTONOMIA: Escaneando ambiente...")
             ponte_serial.enviar_comando('e')
             dados_scan = ponte_serial.receber_scan_dados()
             
-            if dados_scan:
-                mapeador.adicionar_scan(dados_scan)
-                caminho_mapa = mapeador.salvar_mapa()
-                if comunicador_mqtt.publicar_mapa(caminho_mapa):
-                    os.remove(caminho_mapa)
+            if not dados_scan:
+                print("AVISO: Scan não retornou dados. Pulando ciclo.")
+                time.sleep(1)
+                continue
 
-            # ESTADO 2: DECISÃO - Lógica simples de "seguir a parede"
-            distancia_frente = 0
-            distancia_direita = 0
+            mapeador.adicionar_scan(dados_scan)
+            caminho_mapa = mapeador.salvar_mapa()
+            if comunicador_mqtt.publicar_mapa(caminho_mapa):
+                os.remove(caminho_mapa)
+
+            distancia_frente = 1000
             for angulo, dist in dados_scan:
-                if 80 <= angulo <= 100:
-                    distancia_frente = dist
-                if 0 <= angulo <= 20:
-                    distancia_direita = dist
+                if 80 <= angulo <= 100 and dist > 0:
+                    distancia_frente = min(distancia_frente, dist)
             
-            comunicador_mqtt.publicar_status(f"AUTONOMIA: Decidindo... Frente: {distancia_frente}cm, Direita: {distancia_direita}cm")
+            comunicador_mqtt.publicar_status(f"AUTONOMIA: Decidindo... Obstáculo à frente: {distancia_frente}cm")
 
-            # Ações com base na decisão
-            if distancia_frente > 30: # Se o caminho à frente está livre
-                ponte_serial.enviar_comando('w150') # Anda pra frente
-                time.sleep(1) # por 1 segundo
-            else: # Se há uma parede à frente
-                comunicador_mqtt.publicar_status("AUTONOMIA: Obstáculo! Virando à esquerda.")
-                ponte_serial.enviar_comando('a180') # Vira à esquerda
-                time.sleep(1.5) # por 1.5 segundos
+            VELOCIDADE_MOVIMENTO = 150
+            VELOCIDADE_ROTACAO = 180
             
-            ponte_serial.enviar_comando('q') # Sempre para antes do próximo ciclo
+            if distancia_frente > 35:
+                ponte_serial.enviar_comando(f'w{VELOCIDADE_MOVIMENTO}')
+                time.sleep(1.0)
+            else:
+                comunicador_mqtt.publicar_status("AUTONOMIA: Obstáculo! Virando à esquerda.")
+                ponte_serial.enviar_comando(f'a{VELOCIDADE_ROTACAO}')
+                time.sleep(1.2)
+            
+            ponte_serial.enviar_comando('q')
             time.sleep(1)
 
     except KeyboardInterrupt:
         print("\nComando de encerramento recebido (Ctrl+C).")
     finally:
-        ponte_serial.enviar_comando('q')
+        if ponte_serial:
+            print("Finalizando... Parando motores e fechando conexão.")
+            ponte_serial.enviar_comando('q')
+            ponte_serial.fechar_conexao()
         comunicador_mqtt.publicar_status("OFFLINE")
         print("\n--- PROGRAMA FINALIZADO ---")
-
 
 if __name__ == "__main__":
     main()
