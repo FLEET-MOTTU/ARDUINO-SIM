@@ -1,275 +1,158 @@
-# import os
-# import time
-# import serial
+# arquivo: main.py (VERSÃO FINAL 2.0 - COMPLETA)
 
-# from src.config import settings
-# from src.communication import MqttPublisher
-# from src.hardware import SerialHandler
-# from src.mapping import Mapper
-
-# def main():
-#     print("--- INICIANDO CÉREBRO AUTÔNOMO DO ROBÔ ---")
-    
-#     ponte_serial = None
-#     try:
-#         # Tenta se conectar a QUALQUER porta definida no .env.
-#         # Não há mais modo de simulação, apenas "conectar ao hardware".
-#         # O "hardware" pode ser real ou o nosso firmware virtual.
-#         ponte_serial = SerialHandler(settings.serial_port, settings.baud_rate)
-            
-#     except serial.SerialException as e:
-#         print("\nERRO FATAL: Não foi possível estabelecer comunicação serial.")
-#         print(f"Verifique se o dispositivo (real ou simulado) está disponível na porta '{settings.serial_port}'.")
-#         print(f"Se estiver em simulação, garanta que 'firmware.py' está rodando.")
-#         print(f"Se estiver em produção, garanta que o Arduino está conectado.")
-#         print(f"Detalhe do Erro: {e}")
-#         return
-
-#     comunicador_mqtt = MqttPublisher(settings.mqtt_broker_host, settings.mqtt_broker_port)
-#     mapeador = Mapper()
-    
-#     comunicador_mqtt.publicar_status("ONLINE - Iniciando exploração autônoma")
-#     time.sleep(1)
-
-#     try:
-#         # Loop de controle principal. Cada iteração é um "tick" de decisão.
-#         while True:
-#             # --- PERCEPÇÃO ---
-#             ponte_serial.enviar_comando('e')
-#             dados_scan = ponte_serial.receber_scan_dados()
-            
-#             if not dados_scan:
-#                 print("AVISO: Scan falhou. Parando por seguranca.")
-#                 ponte_serial.enviar_comando('q') # Para se o sensor falhar
-#                 time.sleep(1)
-#                 continue
-
-#             # ... (código de mapeamento e publicação não muda) ...
-#             mapeador.adicionar_scan(dados_scan)
-#             caminho_mapa = mapeador.salvar_mapa()
-#             if comunicador_mqtt.publicar_mapa(caminho_mapa):
-#                 os.remove(caminho_mapa)
-
-#             # --- DECISÃO ---
-#             distancia_frente = 1000
-#             distancia_direita = 1000
-#             for angulo, dist in dados_scan:
-#                 if dist > 0:
-#                     if 80 <= angulo <= 100:
-#                         distancia_frente = min(distancia_frente, dist)
-#                     if 0 <= angulo <= 30:
-#                         distancia_direita = min(distancia_direita, dist)
-            
-#             # --- LÓGICA DE AÇÃO CONTÍNUA ---
-#             VELOCIDADE_MOVIMENTO = 150
-#             VELOCIDADE_ROTACAO = 120
-#             DISTANCIA_SEGURANCA_FRENTE = 40
-#             DISTANCIA_ALVO_PAREDE = 35
-#             MARGEM_PAREDE = 10
-            
-#             # A decisão agora define o estado de movimento para o próximo ciclo.
-#             # O robô não para mais entre as decisões.
-            
-#             if distancia_frente < DISTANCIA_SEGURANCA_FRENTE:
-#                 comunicador_mqtt.publicar_status(f"AUTONOMIA: Obstaculo a {distancia_frente}cm. Virando a esquerda.")
-#                 ponte_serial.enviar_comando(f'a{VELOCIDADE_ROTACAO + 30}')
-            
-#             elif distancia_direita > DISTANCIA_ALVO_PAREDE + MARGEM_PAREDE:
-#                 comunicador_mqtt.publicar_status(f"AUTONOMIA: Longe da parede ({distancia_direita}cm). Virando a direita.")
-#                 ponte_serial.enviar_comando(f'd{VELOCIDADE_ROTACAO}')
-            
-#             elif distancia_direita < DISTANCIA_ALVO_PAREDE - MARGEM_PAREDE:
-#                 comunicador_mqtt.publicar_status(f"AUTONOMIA: Perto da parede ({distancia_direita}cm). Virando a esquerda.")
-#                 ponte_serial.enviar_comando(f'a{VELOCIDADE_ROTACAO}')
-
-#             else:
-#                 comunicador_mqtt.publicar_status(f"AUTONOMIA: Seguindo parede a {distancia_direita}cm. Avancando.")
-#                 ponte_serial.enviar_comando(f'w{VELOCIDADE_MOVIMENTO}')
-
-#             # O tempo de sleep agora é o "tempo de reação" do robô.
-#             # Ele continuará fazendo a última ação comandada durante este tempo.
-#             time.sleep(0.3)
-
-#     except KeyboardInterrupt:
-#         print("\nComando de encerramento recebido (Ctrl+C).")
-#     finally:
-#         if ponte_serial:
-#             print("Finalizando... Parando motores e fechando conexão.")
-#             ponte_serial.enviar_comando('q')
-#             ponte_serial.fechar_conexao()
-#         comunicador_mqtt.publicar_status("OFFLINE")
-#         print("\n--- PROGRAMA FINALIZADO ---")
-
-# if __name__ == "__main__":
-#     main()
-
-# Em main.py
+import math
 import os
-import time
-import serial
-import random
+from PIL import Image
+from collections import deque
+import numpy as np
 
+# --- Imports da nossa arquitetura ---
 from src.config import settings
-from src.communication import MqttPublisher
-from src.hardware import SerialHandler
-from src.mapping import Mapper
+from src.hardware.serial_handler import SerialHandler
+from src.communication.mqtt_publisher import MqttPublisher
+from src.robot.state import RobotState
+from src.robot.chassis import Chassis
+from src.mapping.slam_manager import SLAMManager
+from src.navigation.navigator import Navigator
+from robot_specifications import (
+    STALLED_DISTANCE_THRESHOLD_CM,
+    MAP_COVERAGE_STABILITY_THRESHOLD,
+    CYCLES_TO_CONFIRM_COMPLETION
+)
 
-ROBO_VELOCIDADE_LINEAR_CM_S = 20.0
-ROBO_VELOCIDADE_ANGULAR_GRAUS_S = 90.0
+
+def save_map_image(image: Image.Image, path: str):
+    """Função auxiliar para salvar a imagem do mapa."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        image.save(path)
+    except Exception as e:
+        print(f"[MAIN] Erro ao salvar a imagem do mapa: {e}")
+
 
 def main():
-    # ... (inicialização do serial, mqtt, mapper não mudam) ...
-    ponte_serial = SerialHandler(settings.serial_port, settings.baud_rate)
-    comunicador_mqtt = MqttPublisher(settings.mqtt_broker_host, settings.mqtt_broker_port)
-    mapeador = Mapper()
-    
-    # --- POSE INICIAL DO ROBÔ (POSIÇÃO E ORIENTAÇÃO) ---
-    # O mapa tem 500x500 pixels. A escala é 2px/cm.
-    # O "mundo" tem 250x250 cm. O centro é (125, 125).
-    pose_robo = {
-        'x': 130.0,  # Posição inicial em cm
-        'y': 140.0,  # Posição inicial em cm
-        'theta_rad': math.pi # Apontando para "baixo" (180 graus), em radianos
-    }
-    
+    print("--- INICIANDO CÉREBRO AUTÔNOMO DO ROBÔ (ARQUITETURA FINAL) ---")
+
+    # --- FASE DE INICIALIZAÇÃO DOS COMPONENTES ---
     try:
+        # Componentes de "baixo nível"
+        serial_handler = SerialHandler(settings.serial_port, settings.baud_rate)
+        mqtt_publisher = MqttPublisher(settings.mqtt_broker_host, settings.mqtt_broker_port)
+        
+        # Componentes "especialistas" do robô
+        initial_pose_cm_rad = ( (settings.map_size_meters * 100 / 2), (settings.map_size_meters * 100 / 2), 0.0 )
+        robot_state = RobotState(*initial_pose_cm_rad)
+        
+        chassis = Chassis(serial_handler)
+        slam_manager = SLAMManager(settings.map_width_px, settings.map_size_meters)
+        navigator = Navigator() # Usa o danger_threshold padrão de 20.0cm
+
+        # Variáveis para a lógica de conclusão da missão
+        pose_history = deque(maxlen=30)
+        last_map_coverage = 0 # Armazena a última contagem de pixels explorados
+        consecutive_stable_cycles = 0
+
+        print("[MAIN] Todos os componentes foram inicializados com sucesso.")
+
+    except Exception as e:
+        print(f"[MAIN] ERRO CRÍTICO DURANTE A INICIALIZAÇÃO: {e}")
+        return
+
+    try:
+        # --- OBTÉM A PRIMEIRA LEITURA DO MUNDO ANTES DO LOOP ---
+        print("[MAIN] Realizando o primeiro scan para obter o estado inicial do ambiente...")
+        serial_handler.enviar_comando('e')
+        scan_data_cm = serial_handler.receber_scan_dados()
+        if not scan_data_cm:
+            print("[MAIN] ERRO: Scan inicial falhou. O robô não pode operar sem sensores.")
+            return
+
+        # --- LOOP PRINCIPAL ORQUESTRADO ---
         while True:
-            # 1. PERCEPÇÃO
-            print("\n--- Novo Ciclo ---")
-            ponte_serial.enviar_comando('e')
-            dados_scan = ponte_serial.receber_scan_dados()
+            current_pose_cm_rad = robot_state.get_pose_cm_rad()
+            print(f"\n--- Novo Ciclo --- Pose Atual: {robot_state}")
+
+            # 1. NAVEGAÇÃO: Onde devemos ir?
+            action = navigator.decide_next_action(scan_data_cm)
             
-            if not dados_scan:
-                print("AVISO: Scan falhou. Parando por seguranca.")
-                ponte_serial.enviar_comando('q')
+            # 2. AÇÃO E ODOMETRIA: Mova-se e estime o deslocamento.
+            local_odometry_delta = chassis.execute_action(action)
+            
+            # Converte o delta local para o delta global
+            d_frente, _, d_theta = local_odometry_delta
+            theta = current_pose_cm_rad[2]
+            global_delta_x = d_frente * math.cos(theta)
+            global_delta_y = d_frente * math.sin(theta)
+            global_odometry_delta = (global_delta_x, global_delta_y, d_theta)
+            
+            # 3. PERCEPÇÃO: Veja o mundo da nova posição.
+            serial_handler.enviar_comando('e')
+            scan_data_cm = serial_handler.receber_scan_dados()
+            if not scan_data_cm:
+                print("[MAIN] AVISO: Falha no scan durante o loop. Pulando este ciclo.")
                 continue
 
-            # 2. MAPEAMENTO
-            # Agora passamos os dados do scan E a pose atual do robô
-            mapeador.adicionar_scan(dados_scan, pose_robo)
-            caminho_mapa = mapeador.salvar_mapa()
-            comunicador_mqtt.publicar_mapa(caminho_mapa)
-            # os.remove(caminho_mapa) # Mantemos o mapa para o simulador ler
-            print(f"MAPEAMENTO: Mapa incremental atualizado em '{caminho_mapa}'")
-
-            # 3. DECISÃO
-            distancia_frente = 1000
-            for angulo, dist in dados_scan:
-                if 80 <= angulo <= 100 and dist > 0:
-                    distancia_frente = min(distancia_frente, dist)
+            # 4. MAPEAMENTO E LOCALIZAÇÃO: Use o SLAM para corrigir a rota.
+            slam_manager.update(scan_data_cm, global_odometry_delta)
+            corrected_pose_cm_rad = slam_manager.get_corrected_pose_cm_rad()
             
-            is_stuck = distancia_frente < 20 # Distância de "preso" um pouco maior
-            print(f"PERCEPÇÃO: Distancia a frente: {distancia_frente}cm. Preso? {is_stuck}")
+            # 5. ATUALIZAÇÃO DE ESTADO: Corrija a posição "oficial".
+            robot_state.update_pose(*corrected_pose_cm_rad)
+            print(f"[MAIN] Pose CORRIGIDA pelo SLAM: {robot_state}")
 
-            # 4. AÇÃO E ATUALIZAÇÃO DA ODOMETRIA
-            if is_stuck:
-                # Manobra evasiva
-                direcao = random.choice(['a', 'd'])
-                velocidade = random.randint(180, 220)
-                duracao = random.uniform(1.0, 1.5)
-                
-                print(f"ACAO: Preso! Virando para '{direcao}' por {duracao:.1f}s.")
-                ponte_serial.enviar_comando(f'{direcao}{velocidade}')
-                time.sleep(duracao)
-                ponte_serial.enviar_comando('q')
-                
-                # Atualiza a orientação na nossa pose estimada
-                velocidade_percentual = velocidade / 255.0
-                angulo_virado_graus = ROBO_VELOCIDADE_ANGULAR_GRAUS_S * velocidade_percentual * duracao
-                if direcao == 'a': # Esquerda é positivo
-                    pose_robo['theta_rad'] += math.radians(angulo_virado_graus)
-                else: # Direita é negativo
-                    pose_robo['theta_rad'] -= math.radians(angulo_virado_graus)
+            # 6. PUBLICAÇÃO: Mostre o resultado.
+            map_image = slam_manager.get_map_image()
+            caminho_mapa = os.path.join(settings.map_output_dir, "map_slam_latest.png")
+            save_map_image(map_image, caminho_mapa)
+            mqtt_publisher.publicar_mapa(caminho_mapa)
 
-            else:
-                # Andar para frente
-                velocidade = 150
-                duracao = 0.8
-                print(f"ACAO: Caminho livre. Avancando por {duracao}s.")
-                ponte_serial.enviar_comando(f'w{velocidade}')
-                time.sleep(duracao)
-                # Não precisa parar, o próximo comando (scan) interrompe o movimento
-                
-                # Atualiza a posição X e Y na nossa pose estimada
-                velocidade_percentual = velocidade / 255.0
-                distancia_movida = ROBO_VELOCIDADE_LINEAR_CM_S * velocidade_percentual * duracao
-                
-                pose_robo['x'] += distancia_movida * math.cos(pose_robo['theta_rad'])
-                pose_robo['y'] += distancia_movida * math.sin(pose_robo['theta_rad'])
+            # --- ETAPA 7: VERIFICAÇÃO DE CONCLUSÃO DA MISSÃO ---
+            current_pose = robot_state.get_pose_cm_rad()
+            pose_history.append(current_pose)
             
-            # Normaliza o ângulo para evitar que ele cresça indefinidamente
-            pose_robo['theta_rad'] = math.atan2(math.sin(pose_robo['theta_rad']), math.cos(pose_robo['theta_rad']))
-            print(f"ODOMETRIA: Nova pose estimada -> X={pose_robo['x']:.1f}cm, Y={pose_robo['y']:.1f}cm, Angulo={math.degrees(pose_robo['theta_rad']):.1f}deg")
+            map_image_gray = map_image.convert('L')
+            map_array = np.array(map_image_gray)
+            
+            if len(pose_history) == pose_history.maxlen:
+                # Verifica se o robô está parado
+                start_pose = pose_history[0]
+                end_pose = pose_history[-1]
+                distance_moved = math.hypot(end_pose[0] - start_pose[0], end_pose[1] - start_pose[1])
+                robot_is_stalled = distance_moved < STALLED_DISTANCE_THRESHOLD_CM
 
+                # Verifica se o mapa não está crescendo
+                current_map_coverage = np.count_nonzero(map_array)
+                coverage_growth = current_map_coverage - last_map_coverage
+                map_is_stable = coverage_growth < MAP_COVERAGE_STABILITY_THRESHOLD
+                
+                if robot_is_stalled and map_is_stable:
+                    consecutive_stable_cycles += 1
+                    print(f"[MISSION] Robô parado e cobertura do mapa estável ({coverage_growth} pixels novos). "
+                          f"Ciclos de confirmação: {consecutive_stable_cycles}/{CYCLES_TO_CONFIRM_COMPLETION}")
+                else:
+                    consecutive_stable_cycles = 0
+
+                last_map_coverage = current_map_coverage
+                
+                if consecutive_stable_cycles >= CYCLES_TO_CONFIRM_COMPLETION:
+                    print("\n" + "="*50)
+                    print("MISSÃO CONCLUÍDA: O robô mapeou o ambiente e não há mais progresso a ser feito.")
+                    print("="*50)
+                    break # Encerra o loop while
+            
     except KeyboardInterrupt:
-        print("\nComando de encerramento recebido (Ctrl+C).")
+        print("\n[MAIN] Comando de encerramento recebido (Ctrl+C).")
+    except Exception as e:
+        print(f"\n[MAIN] ERRO INESPERADO NO LOOP PRINCIPAL: {e}")
     finally:
-        if ponte_serial:
-            print("Finalizando... Parando motores e fechando conexão.")
-            ponte_serial.enviar_comando('q')
-            ponte_serial.fechar_conexao()
-        comunicador_mqtt.publicar_status("OFFLINE")
+        print("[MAIN] Finalizando... Parando motores e fechando conexões.")
+        if 'serial_handler' in locals():
+            serial_handler.enviar_comando('q')
+            serial_handler.fechar_conexao()
+        if 'mqtt_publisher' in locals():
+            mqtt_publisher.publicar_status("OFFLINE")
         print("\n--- PROGRAMA FINALIZADO ---")
 
-# Pequena alteração para o Mapper ser mais auto-contido
-class Mapper:
-    """Gerencia a criação e atualização INCREMENTAL da planta baixa."""
-    def __init__(self):
-        self.largura = settings.map_width_px
-        self.altura = settings.map_height_px
-        self.output_dir = settings.map_output_dir
-        self.escala = 2.0 # Pixels/cm. Usar float para precisão.
-        
-        # --- MUDANÇA PRINCIPAL: O mapa agora é um atributo persistente ---
-        self.mapa_imagem = Image.new("L", (self.largura, self.altura), "black")
-        self.desenho = ImageDraw.Draw(self.mapa_imagem)
-        
-        os.makedirs(self.output_dir, exist_ok=True)
-
-    def adicionar_scan(self, dados_scan, pose_robo):
-        """
-        Adiciona os pontos de um novo scan ao mapa existente,
-        considerando a posição e orientação atual do robô.
-        'pose_robo' é um dicionário: {'x': cm, 'y': cm, 'theta_rad': radianos}
-        """
-        # Posição do robô no mapa (em pixels)
-        robo_x_px = pose_robo['x'] * self.escala
-        robo_y_px = pose_robo['y'] * self.escala
-        
-        for angulo_relativo_graus, dist_cm in dados_scan:
-            if 0 < dist_cm < 200: # Ignora leituras inválidas ou muito longas
-                
-                # O ângulo global do raio do sensor é a orientação do robô + o ângulo do sensor
-                angulo_relativo_rad = math.radians(angulo_relativo_graus)
-                angulo_global_rad = pose_robo['theta_rad'] + angulo_relativo_rad
-                
-                # Calcula a posição do ponto detectado no mundo (em cm)
-                ponto_x_cm = pose_robo['x'] + dist_cm * math.cos(angulo_global_rad)
-                ponto_y_cm = pose_robo['y'] + dist_cm * math.sin(angulo_global_rad)
-                
-                # Converte a posição do ponto para pixels no mapa
-                ponto_x_px = int(ponto_x_cm * self.escala)
-                # O eixo Y da imagem é invertido em relação à matemática
-                ponto_y_px = int(self.altura - (ponto_y_cm * self.escala))
-                
-                # Desenha o ponto no mapa se estiver dentro dos limites
-                if 0 <= ponto_x_px < self.largura and 0 <= ponto_y_px < self.altura:
-                    self.desenho.point((ponto_x_px, ponto_y_px), fill="white")
-
-    def salvar_mapa(self) -> str:
-        """Salva a imagem do mapa ATUALIZADO com um timestamp e retorna o caminho."""
-        timestamp = int(time.time())
-        nome_arquivo = f"map_{timestamp}.png"
-        caminho_completo = os.path.join(self.output_dir, nome_arquivo)
-        
-        # Salva o mapa que está sendo construído na memória
-        self.mapa_imagem.save(caminho_completo)
-        return caminho_completo
 
 if __name__ == "__main__":
-    # Adicionamos os imports que faltavam no topo do arquivo main.py
-    from PIL import Image, ImageDraw
-    from src.config import settings
-    import math
-
     main()

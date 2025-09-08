@@ -1,1 +1,1 @@
-from .mapper import Mapper
+from .slam_manager import SLAMManager

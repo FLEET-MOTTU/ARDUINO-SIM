@@ -1,6 +1,5 @@
 from pydantic_settings import BaseSettings
 
-
 class Settings(BaseSettings):
     # MQTT Settings
     mqtt_broker_host: str
@@ -16,10 +15,10 @@ class Settings(BaseSettings):
     map_width_px: int = 500
     map_height_px: int = 500
     map_output_dir: str = "output/maps"
+    map_size_meters: int = 25
 
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
-
 
 settings = Settings()
