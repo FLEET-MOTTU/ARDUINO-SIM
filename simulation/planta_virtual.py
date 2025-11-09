@@ -19,13 +19,13 @@ COR_SENSOR = (255, 50, 50)
 # Formato: lista de retângulos (x, y, largura, altura)
 ESPESSURA_PAREDE_CM = 2.0
 PAREDES_RECTANGLES_CM = [
-    # --- Quadrado Externo (250x250 cm) ---
+    # Quadrado Externo (250x250 cm)
     (10, 10, 250, ESPESSURA_PAREDE_CM),
     (10, 10, ESPESSURA_PAREDE_CM, 250),
     (260 - ESPESSURA_PAREDE_CM, 10, ESPESSURA_PAREDE_CM, 250),
     (10, 260 - ESPESSURA_PAREDE_CM, 250, ESPESSURA_PAREDE_CM),
 
-    # --- Obstáculos Internos para teste de navegação ---
+    # Obstáculos Internos para teste de navegação
     (80, 80, 40, ESPESSURA_PAREDE_CM),
     (160, 80, 40, ESPESSURA_PAREDE_CM),
     (120, 150, ESPESSURA_PAREDE_CM, 50)
@@ -51,7 +51,7 @@ class Planta:
         self.area_mapa = pygame.Rect(LARGURA // 2, 0, LARGURA // 2, ALTURA)
 
         # Calcula a escala de visualização dinamicamente para que o mundo sempre
-        # caiba perfeitamente na área de simulação.
+        # caiba na área de simulação.
         max_x_cm = max(p[0] + p[2] for p in PAREDES_RECTANGLES_CM) + 10 # Margem de segurança
         max_y_cm = max(p[1] + p[3] for p in PAREDES_RECTANGLES_CM) + 10 # Margem de segurança
         escala_x = self.area_simulador.width / max_x_cm

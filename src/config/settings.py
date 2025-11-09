@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     mqtt_topico_status: str
     mqtt_topico_mapa: str
 
-    # Configurações da porta serial para comunicação com o "Corpo"
+    # Configurações da porta serial para comunicação com o Corpo
     serial_port: str
     baud_rate: int
 

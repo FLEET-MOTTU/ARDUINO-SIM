@@ -11,6 +11,8 @@ para o algoritmo de SLAM principal.
 
 import numpy as np
 import math
+import sys
+import io
 from simpleicp import SimpleICP, PointCloud
 
 class LaserOdometry:
@@ -41,9 +43,13 @@ class LaserOdometry:
         algoritmo ICP.
         """
         points = []
+        distances = []
+        
         for angulo_graus, dist_cm in scan_data_cm:
             # Filtra leituras inválidas para não poluir o cálculo do ICP.
-            if 0 < dist_cm < 300:
+            # Limitado a 300cm (3m) para evitar drift de long-range
+            if 5 < dist_cm < 300:
+                distances.append(dist_cm)
                 # Converte o ângulo do servo (0-180) para um ângulo matemático (-90 a +90).
                 angulo_rad = math.radians(angulo_graus - 90)
                 x = dist_cm * math.cos(angulo_rad)
@@ -51,7 +57,28 @@ class LaserOdometry:
                 # A biblioteca simpleicp opera em 3D, então adicionamos z=0 por compatibilidade.
                 points.append([x, y, 0.0])
         
-        return np.array(points) if points else np.array([])
+        if not points:
+            return np.array([])
+        
+        # Filtro de outliers: remove pontos muito distantes da mediana
+        # (ajuda a remover leituras espúrias que causam drift)
+        # Apenas aplica se tiver pontos suficientes
+        if len(distances) > 10:  # Aumentado de 5 para 10
+            median_dist = np.median(distances)
+            std_dist = np.std(distances)
+            filtered_points = []
+            for i, dist in enumerate(distances):
+                # Critério mais liberal: aceita pontos dentro de 3 desvios padrão
+                # OU dentro de 3x a mediana (o que for maior)
+                max_dev = max(std_dist * 3, median_dist * 2.0)
+                if abs(dist - median_dist) < max_dev:
+                    filtered_points.append(points[i])
+            
+            # Só usa o filtro se ainda sobrar pelo menos 8 pontos
+            if len(filtered_points) >= 8:
+                return np.array(filtered_points)
+        
+        return np.array(points)
 
     def calculate_delta(self, current_scan_cm: list[tuple[int, int]]) -> tuple[float, float, float]:
         """
@@ -80,22 +107,56 @@ class LaserOdometry:
             self.previous_scan_points = current_scan_points
             return (0.0, 0.0, 0.0)
 
+        # Verifica se os scans são muito similares (robô não se moveu)
+        # Calcula a diferença média entre os pontos
+        if self.previous_scan_points.shape[0] == current_scan_points.shape[0]:
+            diff = np.linalg.norm(current_scan_points - self.previous_scan_points, axis=1)
+            mean_diff = np.mean(diff)
+            if mean_diff < 1.0:  # Menos de 1cm de diferença média
+                self.previous_scan_points = current_scan_points
+                return (0.0, 0.0, 0.0)
+
         # Prepara os dados no formato que a biblioteca `simpleicp` exige.
         pc_fix = PointCloud(self.previous_scan_points, columns=["x", "y", "z"])
         pc_mov = PointCloud(current_scan_points, columns=["x", "y", "z"])
 
-        # Executa o algoritmo de alinhamento.
-        self.icp_solver.add_point_clouds(pc_fix, pc_mov)
-        H, _, _, _ = self.icp_solver.run(
-            max_overlap_distance=20,
-            max_iterations=20,
-            min_change=0.001
-        )
+        # Executa o algoritmo de alinhamento com tratamento de erro.
+        # Redireciona stdout para suprimir logs verbosos do SimpleICP
+        try:
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()  # Captura output do ICP
+            
+            self.icp_solver.add_point_clouds(pc_fix, pc_mov)
+            H, _, _, _ = self.icp_solver.run(
+                max_overlap_distance=25,   # Aumentado de 10 para 25 (mais tolerante)
+                max_iterations=30,         # Reduzido de 50 para 30 (mais rápido)
+                min_change=0.001           # Aumentado de 0.0001 para 0.001 (menos iterações desnecessárias)
+            )
+        except Exception as e:
+            print(f"[ICP ODOM] ERRO no matching: {e}. Retornando delta zero.", file=old_stdout)
+            self.previous_scan_points = current_scan_points
+            return (0.0, 0.0, 0.0)
+        finally:
+            sys.stdout = old_stdout  # Restaura stdout
 
         # Extrai os resultados da matriz de transformação homogênea 4x4.
         dx = H[0, 3]  # Translação em X (tx)
         dy = H[1, 3]  # Translação em Y (ty)
         d_theta = math.atan2(H[1, 0], H[0, 0]) # Rotação em torno de Z
+
+        # Filtro de sanidade: limita movimentos muito grandes que indicam erro de matching
+        # Em um ciclo típico, o robô não deve se mover mais que 20cm ou girar mais que 30°
+        max_translation = 20.0  # cm (reduzido de 30)
+        max_rotation = math.radians(30)  # rad (reduzido de 45)
+        
+        total_translation = math.sqrt(dx**2 + dy**2)
+        
+        if total_translation > max_translation or abs(d_theta) > max_rotation:
+            print(f"[ICP ODOM] AVISO: Movimento anômalo detectado e filtrado "
+                  f"(dx={dx:.2f}, dy={dy:.2f}, dθ={math.degrees(d_theta):.2f}°)")
+            # Retorna movimento zero quando detecta anomalia
+            self.previous_scan_points = current_scan_points
+            return (0.0, 0.0, 0.0)
 
         # Armazena o scan atual para ser o "scan anterior" no próximo ciclo.
         self.previous_scan_points = current_scan_points

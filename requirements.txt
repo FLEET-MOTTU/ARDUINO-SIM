@@ -8,3 +8,5 @@ pygame
 setuptools
 numpy
 simpleicp
+streamlit
+pandas

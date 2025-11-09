@@ -54,13 +54,19 @@ class Chassis:
         speed = action.get('speed', 0)
         duration = action.get('duration', 0)
 
+        print(f"[CHASSIS] Executando ação: cmd='{command_char}', speed={speed}, duration={duration}s")
+
         if speed > 0 and duration > 0:
             full_command = f"{command_char}{speed}"
             self.serial.enviar_comando(full_command)
+            print(f"[CHASSIS] Aguardando {duration}s...")
             time.sleep(duration)
+            print(f"[CHASSIS] Movimento completo, enviando parar...")
+            self.serial.enviar_comando('q')
+        else:
+            print(f"[CHASSIS] ⚠️ Ação inválida (speed={speed}, duration={duration}) - enviando parar diretamente")
             self.serial.enviar_comando('q')
         
-        # Retorna o "chute" de odometria, que será usado pelo SLAM.
         return self._calculate_local_odometry_delta(command_char, speed, duration)
 
     def _calculate_local_odometry_delta(self, command_char: str, speed: int, duration: float) -> tuple[float, float, float]:
@@ -72,7 +78,7 @@ class Chassis:
         (movimento para frente/trás e rotação).
         """
         delta_frente_cm = 0.0
-        delta_lado_cm = 0.0  # Nosso robô não possui movimento lateral (não é omnidirecional).
+        delta_lado_cm = 0.0  # robô não possui movimento lateral
         delta_theta_rad = 0.0
         
         if duration > 0 and speed > 0:

@@ -27,13 +27,8 @@ class SerialHandler:
         self.conexao = None
         try:
             print(f"Tentando conectar ao Arduino na porta {porta}...")
-            # O timeout é crucial para evitar que o programa trave indefinidamente
-            # se o firmware não responder.
             self.conexao = serial.Serial(porta, baud, timeout=3)
-            # Uma pausa para permitir que o microcontrolador (ou simulação) se
-            # estabilize após o estabelecimento da conexão.
             time.sleep(2)
-            # Limpa qualquer dado residual no buffer de entrada da porta serial.
             self.conexao.flushInput()
             print("Conectado ao Arduino com sucesso!")
         except serial.SerialException as e:
@@ -75,10 +70,8 @@ class SerialHandler:
                     angulo_str, dist_str = linha.split(';')
                     dados_processados.append((int(angulo_str), int(dist_str)))
                 except ValueError:
-                    # Proteção contra linhas de dados corrompidas.
                     print(f"AVISO: Não foi possível processar a linha de dados: '{linha}'")
             else:
-                # Ocorre se o timeout de 3s for atingido antes de uma linha ser recebida.
                 print(f"AVISO: Leitura {i+1}/{NUMERO_DE_LEITURAS_ESPERADAS} falhou ou retornou vazia (timeout?).")
         
         print(f"Scan recebido e processado. {len(dados_processados)} pontos capturados.")

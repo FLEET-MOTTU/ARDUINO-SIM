@@ -42,6 +42,9 @@ ECHO [AUTOMACAO] -> Iniciando o Cerebro do Robo (main.py)...
 START "Cérebro do Robô (RPi)" cmd /k python main.py
 
 ECHO.
+ECHO [AUTOMACAO] NOTA: Verifique se voce possui um par de portas virtuais COM6<->COM7 configurado!
+ECHO [AUTOMACAO] (Use com0com ou similar para criar pares de portas virtuais)
+ECHO.
 ECHO [AUTOMACAO] Setup concluido! Duas novas janelas foram abertas.
 ECHO [AUTOMACAO] Voce pode fechar esta janela agora.
 ECHO.

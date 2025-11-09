@@ -85,7 +85,7 @@ class FirmwareSimulado:
         except Exception as e:
             print(f"VISUALIZACAO: Erro inesperado ao carregar imagem do mapa: {e}")
 
-    # --- Funções de Controle do Chassi ---
+    # Funções de Controle do Chassi
     def _chassi_avancar(self, velocidade: int):
         self.corpo_robo.set_velocidades(velocidade / MAX_VELOCIDADE_ARDUINO, 0)
 

@@ -30,16 +30,11 @@ class MqttPublisher:
         self.conectado = False
         try:
             print(f"Tentando conectar ao Broker MQTT em {settings.mqtt_broker_host}...")
-            # `connect` estabelece a conexão TCP.
             self.cliente.connect(settings.mqtt_broker_host, settings.mqtt_broker_port, 60)
             self.conectado = True
-            # `loop_start` inicia uma thread em segundo plano que gerencia a
-            # comunicação, mantendo a conexão viva sem bloquear o loop principal.
             self.cliente.loop_start()
             print("Conectado ao Broker MQTT com sucesso!")
         except Exception as e:
-            # Se a conexão falhar, o robô pode continuar operando, apenas a
-            # visualização remota será desativada.
             print(f"FALHA: Não foi possível conectar ao Broker MQTT. Erro: {e}")
 
     def publicar_status(self, mensagem: str):
@@ -64,12 +59,8 @@ class MqttPublisher:
         print(f"MQTT -> Lendo o arquivo de mapa: {caminho_do_arquivo}")
         try:
             with open(caminho_do_arquivo, "rb") as image_file:
-                # O Base64 é o método padrão para converter dados binários (como uma imagem)
-                # em uma string de texto segura para transmissão.
                 encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
             
-            # O QoS=1 (Quality of Service) garante que a mensagem seja entregue
-            # pelo menos uma vez.
             self.cliente.publish(settings.mqtt_topico_mapa, encoded_string, qos=1)
             print(f"MQTT -> Mapa publicado com sucesso no tópico '{settings.mqtt_topico_mapa}'")
             return True

@@ -108,6 +108,16 @@ class CorpoRoboSimulado:
         
         # Atualiza a posição final do robô.
         self.x_cm, self.y_cm = x_final, y_final
+        dx_real = x_final - x_inicial
+        dy_real = y_final - y_inicial
+        
+        # Acumula o deslocamento real nos "encoders".
+        self.delta_x_acumulado += dx_real
+        self.delta_y_acumulado += dy_real
+        self.delta_theta_acumulado += rotacao
+        
+        # Atualiza a posição final do robô.
+        self.x_cm, self.y_cm = x_final, y_final
 
     def desenhar_na_tela(self, mapa_surface):
         """Delega a renderização para a classe Planta, fornecendo seu estado atual."""

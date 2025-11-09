@@ -53,9 +53,9 @@ def main():
     7.  PUBLICAÇÃO: Envia o mapa atualizado via MQTT.
     8.  VERIFICAÇÃO DE CONCLUSÃO: Checa se a missão de mapeamento terminou.
     """
-    print("--- INICIANDO CÉREBRO AUTÔNOMO DO ROBÔ (ARQUITETURA HÍBRIDA) ---")
+    print("INICIANDO CÉREBRO AUTÔNOMO DO ROBÔ (ARQUITETURA HÍBRIDA)")
     try:
-        # --- FASE 1: INICIALIZAÇÃO DOS COMPONENTES ---
+        # FASE 1: INICIALIZAÇÃO DOS COMPONENTES
         serial_handler = SerialHandler(settings.serial_port, settings.baud_rate)
         mqtt_publisher = MqttPublisher()
         
@@ -64,7 +64,7 @@ def main():
         
         chassis = Chassis(serial_handler)
         slam_manager = SLAMManager(settings.map_width_px, settings.map_size_meters)
-        navigator = Navigator()
+        navigator = Navigator(danger_threshold_cm=50.0)
         laser_odometry = LaserOdometry()
         
         # Buffers para a lógica de fim de missão
@@ -78,8 +78,8 @@ def main():
         return
 
     try:
-        # --- FASE 2: PRIMEIRO SCAN ---
-        print("[MAIN] Realizando o primeiro scan para obter o estado inicial do ambiente...")
+        # FASE 2: PRIMEIRO SCAN
+        print("[MAIN] Realizando o primeiro scan para obter o estado inicial do ambiente")
         serial_handler.enviar_comando('e')
         scan_data_cm = serial_handler.receber_scan_dados()
         if not scan_data_cm:
@@ -89,27 +89,25 @@ def main():
         # Inicializa o calculador de odometria com o primeiro scan.
         laser_odometry.calculate_delta(scan_data_cm)
 
-        # --- FASE 3: LOOP DE CONTROLE PRINCIPAL ---
+        # FASE 3: LOOP DE CONTROLE PRINCIPAL
         while True:
             pose_antes_da_correcao = robot_state.get_pose_cm_rad()
+            x_cm, y_cm, theta_rad = pose_antes_da_correcao
+            theta_deg = math.degrees(theta_rad)
             print(f"\n--- Novo Ciclo --- Pose Atual: {robot_state}")
 
-            # 1. NAVEGAÇÃO
-            action = navigator.decide_next_action(scan_data_cm)
+            # 1. NAVEGAÇÃO (com memória espacial)
+            action = navigator.decide_next_action(scan_data_cm, robot_pose=(x_cm, y_cm, theta_deg))
             
             # 2. AÇÃO
             chassis.execute_action(action)
-            time.sleep(0.05) # Delay para estabilidade da comunicação
+            # Delay para garantir que o movimento físico termine antes do próximo scan
+            time.sleep(0.8)  # Aumentado para 800ms - robô precisa parar completamente
 
-            # 3. PERCEPÇÃO
-            serial_handler.enviar_comando('e')
-            scan_data_cm_atual = serial_handler.receber_scan_dados()
-            if not scan_data_cm_atual:
-                print("[MAIN] AVISO: Falha no scan durante o loop.")
-                continue
-
-            # 4. ODOMETRIA (via ICP Scan Matching)
-            local_odometry_delta = laser_odometry.calculate_delta(scan_data_cm_atual)
+            # 3. ODOMETRIA REAL (via encoders virtuais do firmware)
+            # Mais precisa que ICP - usa física simulada diretamente
+            serial_handler.enviar_comando('o')
+            local_odometry_delta = serial_handler.receber_odometria_dados()
             odometry_history.append(local_odometry_delta)
             
             # Converte o delta local (do robô) para global (do mapa)
@@ -119,22 +117,40 @@ def main():
             global_delta_y = d_frente * math.sin(theta) + d_lado * math.cos(theta)
             global_odometry_delta = (global_delta_x, global_delta_y, d_theta)
 
+            # 4. PERCEPÇÃO (após movimento)
+            serial_handler.enviar_comando('e')
+            scan_data_cm_atual = serial_handler.receber_scan_dados()
+            if not scan_data_cm_atual:
+                print("[MAIN] AVISO: Falha no scan durante o loop.")
+                continue
+
             # 5. MAPEAMENTO E LOCALIZAÇÃO (SLAM)
             slam_manager.update(scan_data_cm_atual, global_odometry_delta)
             corrected_pose_cm_rad = slam_manager.get_corrected_pose_cm_rad()
             
             # Bloco de diagnóstico para comparar a odometria ICP com a correção final do SLAM
-            dx_chute, dy_chute, _ = global_odometry_delta
+            dx_chute, dy_chute, dtheta_chute = global_odometry_delta
             pose_depois_do_chute_x = pose_antes_da_correcao[0] + dx_chute
             pose_depois_do_chute_y = pose_antes_da_correcao[1] + dy_chute
+            pose_depois_do_chute_theta = pose_antes_da_correcao[2] + dtheta_chute
             dx_correcao = corrected_pose_cm_rad[0] - pose_depois_do_chute_x
             dy_correcao = corrected_pose_cm_rad[1] - pose_depois_do_chute_y
-            print(f"[DIAGNOSTICO] Odometria ICP (dx, dy): ({dx_chute:.2f}, {dy_chute:.2f})")
-            print(f"[DIAGNOSTICO] Correção do SLAM (dx, dy): ({dx_correcao:.2f}, {dy_correcao:.2f})")
+            
+            distancia_correcao = math.sqrt(dx_correcao**2 + dy_correcao**2)
+            
+            print(f"[DIAGNOSTICO] Odometria Encoders (dx, dy): ({dx_chute:.2f}, {dy_chute:.2f})")
+            print(f"[DIAGNOSTICO] ⛔ SLAM DESABILITADO - correção ignorada: ({dx_correcao:.2f}, {dy_correcao:.2f})")
+            print(f"[MAIN] 🎯 Usando encoders virtuais puros (sem SLAM)")
+            
+            corrected_pose_cm_rad = (
+                pose_depois_do_chute_x,
+                pose_depois_do_chute_y,
+                pose_depois_do_chute_theta
+            )
             
             # 6. ATUALIZAÇÃO DE ESTADO
             robot_state.update_pose(*corrected_pose_cm_rad)
-            print(f"[MAIN] Pose CORRIGIDA pelo SLAM: {robot_state}")
+            print(f"[MAIN] Pose atualizada (ICP puro): {robot_state}")
 
             # 7. PUBLICAÇÃO
             map_image = slam_manager.get_map_image()
@@ -169,7 +185,7 @@ def main():
     except KeyboardInterrupt:
         print("\n[MAIN] Comando de encerramento recebido (Ctrl+C).")
     finally:
-        print("[MAIN] Finalizando... Parando motores e fechando conexões.")
+        print("[MAIN] Finalizando. Parando motores e fechando conexões.")
         if 'serial_handler' in locals():
             serial_handler.enviar_comando('q')
             serial_handler.fechar_conexao()
